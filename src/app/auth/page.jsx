@@ -6,8 +6,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Sparkles, BookOpen } from "lucide-react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 
 const Auth = () => {
@@ -17,23 +24,37 @@ const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
-  
-  // --- NEW STATE TO TRIGGER REDIRECT ---
-  const [isAuthSuccess, setIsAuthSuccess] = useState(false);
+  const [session, setSession] = useState(null);
 
-  // --- USEEFFECT TO HANDLE THE REDIRECT ---
+  // --- Check session on load ---
   useEffect(() => {
-    if (isAuthSuccess) {
-      // Once isAuthSuccess is true, we redirect.
-      router.push("/");
-    }
-  }, [isAuthSuccess, router]);
+    const getSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+      if (data.session) {
+        router.push("/"); // already logged in
+      }
+    };
+
+    getSession();
+
+    // listen for auth changes
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (event, newSession) => {
+        setSession(newSession);
+        if (newSession) {
+          router.push("/");
+        }
+      }
+    );
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, [router]);
 
   const handleAuth = async (e) => {
-    if (e && typeof e.preventDefault === 'function') {
-      e.preventDefault();
-    }
-    
+    e.preventDefault();
     setLoading(true);
 
     try {
@@ -43,106 +64,102 @@ const Auth = () => {
           password,
         });
         if (error) throw error;
-        toast.success("Welcome back, Master Alchemist!");
-        
-        // --- CHANGE: Set state instead of redirecting directly ---
-        setIsAuthSuccess(true);
-
+        toast.success("Welcome back!");
       } else {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-          },
+          options: { emailRedirectTo: `${window.location.origin}/` },
         });
         if (error) throw error;
-        
+
         if (data.user) {
-          const { error: profileError } = await supabase
-            .from("profiles")
-            .insert({
-              user_id: data.user.id,
-              username: username || email.split("@")[0],
-            });
-          if (profileError) throw profileError;
+          await supabase.from("profiles").insert({
+            user_id: data.user.id,
+            username: username || email.split("@")[0],
+          });
         }
-        
-        toast.success("Your grimoire has been created!");
-        
-        // --- CHANGE: Set state instead of redirecting directly ---
-        setIsAuthSuccess(true);
+
+        toast.success("Account created successfully!");
       }
     } catch (error) {
-      toast.error(error.message || "An error occurred during authentication");
-      console.error("Full auth error:", error);
+      toast.error(error.message || "Something went wrong");
     } finally {
-      // We only set loading to false if there was no success
-      if (!isAuthSuccess) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-background via-background to-secondary/20">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-primary/10 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-accent/10 rounded-full blur-3xl animate-pulse delay-700" />
-      </div>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-black/95 relative overflow-hidden">
+      {/* Cosmic background */}
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 80, repeat: Infinity, ease: "linear" }}
+        className="absolute top-1/4 left-1/4 w-[28rem] h-[28rem] bg-violet-600/20 rounded-full blur-3xl"
+      />
+      <motion.div
+        animate={{ rotate: -360 }}
+        transition={{ duration: 100, repeat: Infinity, ease: "linear" }}
+        className="absolute bottom-1/3 right-1/3 w-[32rem] h-[32rem] bg-fuchsia-600/20 rounded-full blur-3xl"
+      />
 
-      <Card className="w-full max-w-md relative backdrop-blur-sm bg-card/95 border-primary/30 shadow-2xl">
+      <Card className="w-full max-w-md relative z-10 backdrop-blur-md bg-black/50 border border-violet-500/30 shadow-[0_0_25px_rgba(167,139,250,0.3)]">
         <CardHeader className="text-center space-y-2">
-          <div className="flex justify-center mb-4">
-            <div className="relative">
-              <BookOpen className="w-16 h-16 text-accent animate-pulse" />
-              <Sparkles className="w-6 h-6 text-primary absolute -top-2 -right-2" />
-            </div>
-          </div>
-          <CardTitle className="text-3xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
-            The Alchemist's Grand Grimoire
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.6 }}
+            className="flex justify-center mb-4"
+          >
+            <BookOpen className="w-16 h-16 text-violet-400 animate-pulse" />
+            <Sparkles className="w-6 h-6 text-fuchsia-400 absolute -top-2 -right-2 animate-bounce" />
+          </motion.div>
+          <CardTitle className="text-3xl font-extrabold bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-transparent">
+            Medicine Scheduler
           </CardTitle>
-          <CardDescription className="text-muted-foreground">
-            {isLogin ? "Enter your mystical realm" : "Begin your alchemical journey"}
+          <CardDescription className="text-purple-200/70">
+            {isLogin
+              ? "Sign in to manage your schedule"
+              : "Create an account to begin"}
           </CardDescription>
         </CardHeader>
 
         <CardContent>
-          <form className="space-y-4">
+          <form onSubmit={handleAuth} className="space-y-4">
             {!isLogin && (
               <div className="space-y-2">
-                <Label htmlFor="username" className="text-foreground">
-                  Alchemist Name
+                <Label htmlFor="username" className="text-violet-200">
+                  Your Name
                 </Label>
                 <Input
                   id="username"
                   type="text"
-                  placeholder="Master of Elixirs"
+                  placeholder="Elixir Master"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="bg-background/50 border-primary/30 focus:border-primary"
+                  className="bg-black/40 border-violet-500/30 text-white focus:ring-violet-400"
                 />
               </div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">
-                Mystical Email
+              <Label htmlFor="email" className="text-violet-200">
+                Email
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="alchemist@grimoire.magic"
+                placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="bg-background/50 border-primary/30 focus:border-primary"
+                className="bg-black/40 border-violet-500/30 text-white focus:ring-violet-400"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-foreground">
-                Secret Incantation
+              <Label htmlFor="password" className="text-violet-200">
+                Password
               </Label>
               <Input
                 id="password"
@@ -152,25 +169,24 @@ const Auth = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={6}
-                className="bg-background/50 border-primary/30 focus:border-primary"
+                className="bg-black/40 border-violet-500/30 text-white focus:ring-violet-400"
               />
             </div>
 
             <Button
-              type="button"
-              onClick={handleAuth}
-              className="w-full bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-primary-foreground shadow-lg"
+              type="submit"
               disabled={loading}
+              className="w-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 text-white shadow-lg"
             >
               {loading ? (
                 <span className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 animate-spin" />
-                  Conjuring...
+                  Processing...
                 </span>
               ) : isLogin ? (
-                "Enter the Grimoire"
+                "Sign In"
               ) : (
-                "Create My Grimoire"
+                "Create Account"
               )}
             </Button>
           </form>
@@ -179,9 +195,11 @@ const Auth = () => {
             <button
               type="button"
               onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-accent hover:text-accent/80 transition-colors"
+              className="text-sm text-violet-300 hover:text-violet-400 transition-colors"
             >
-              {isLogin ? "Need a new grimoire? Create one" : "Already have a grimoire? Enter here"}
+              {isLogin
+                ? "Need an account? Sign up"
+                : "Already registered? Sign in"}
             </button>
           </div>
         </CardContent>

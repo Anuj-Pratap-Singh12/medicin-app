@@ -1,164 +1,254 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, Clock, Sparkles } from "lucide-react";
-import { toast } from "sonner";
 import Layout from "@/components/Layout";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { motion } from "framer-motion";
+import { Sparkles, Clock, Pill } from "lucide-react";
+import { fetchPerformersWithLogs } from "@/integrations/supabase/supabaseHelper";
+import MedicineCalendar from "@/components/MedicineCalendar";
 
 const Dashboard = () => {
-  const [rituals, setRituals] = useState([]);
+  const [performers, setPerformers] = useState([]);
+  const [user, setUser] = useState(null);
+  const [clock, setClock] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loggedMedicines, setLoggedMedicines] = useState({});
+  const [adherenceData, setAdherenceData] = useState(null);
 
-  const fetchTodaysRituals = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      setLoading(false);
-      return;
+  // Fetch current user
+  useEffect(() => {
+    const fetchUser = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) setUser(data.session.user);
+    };
+    fetchUser();
+  }, []);
+
+  // Clock updater
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      setClock(
+        now.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        })
+      );
+    };
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch performers & adherence
+  const fetchData = async () => {
+    if (!user) return;
+    setLoading(true);
+
+    try {
+      const { performers, loggedMedicines } = await fetchPerformersWithLogs(user.id);
+      console.log("Fetched performers:", performers);
+      setPerformers(performers || []);
+      setLoggedMedicines(loggedMedicines || {});
+
+      const { data: adherenceView, error } = await supabase
+        .from("vw_user_medicine_dashboard")
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (error && error.message) {
+        console.error("View fetch error:", error.message);
+      } else {
+        setAdherenceData(adherenceView || null);
+      }
+    } catch (err) {
+      console.error("fetchData exception:", err);
     }
 
-    const today = new Date().toISOString().split("T")[0];
-    
-    const { data, error } = await supabase
-      .from("rituals")
-      .select(`*, performers (name)`)
-      .eq("alchemist_id", user.id)
-      .eq("scheduled_date", today)
-      .order("execution_time", { ascending: true });
-
-    if (error) {
-      toast.error("Failed to fetch today's rituals");
-      console.error("Fetch rituals error:", error);
-    } else {
-      setRituals(data || []);
-    }
     setLoading(false);
   };
 
+  // Auto-fetch + Realtime updates
   useEffect(() => {
-    fetchTodaysRituals();
-  }, []);
+    if (!user) return;
+    fetchData();
 
-  const updateRitualStatus = async (id, status) => {
-    const { error } = await supabase
-      .from("rituals")
-      .update({ status })
-      .eq("id", id);
+    const perfChannel = supabase
+      .channel("performers-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "performers" }, fetchData)
+      .subscribe();
 
-    if (error) {
-      toast.error("Failed to update ritual status");
-    } else {
-      toast.success(status === "Taken" ? "Potion administered!" : "Ritual marked as missed");
-      fetchTodaysRituals();
-    }
-  };
+    const medChannel = supabase
+      .channel("medicines-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "medicines" }, fetchData)
+      .subscribe();
 
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case "Taken": return <CheckCircle2 className="w-5 h-5 text-green-500" />;
-      case "Missed": return <XCircle className="w-5 h-5 text-destructive" />;
-      default: return <Clock className="w-5 h-5 text-accent" />;
-    }
-  };
+    const logChannel = supabase
+      .channel("medicine_logs-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "medicine_logs" }, fetchData)
+      .subscribe();
 
-  const getStatusBadge = (status) => {
-    const variants = {
-      Taken: "bg-green-500/20 text-green-400 border-green-500/30",
-      Missed: "bg-destructive/20 text-destructive border-destructive/30",
-      Upcoming: "bg-accent/20 text-accent border-accent/30",
+    return () => {
+      supabase.removeChannel(perfChannel);
+      supabase.removeChannel(medChannel);
+      supabase.removeChannel(logChannel);
     };
-    return variants[status] || variants.Upcoming;
-  };
+  }, [user]);
 
-  if (loading) {
+  if (loading)
     return (
       <Layout>
         <div className="flex items-center justify-center h-[60vh]">
-          <Sparkles className="w-8 h-8 text-primary animate-spin" />
+          <Sparkles className="w-8 h-8 text-violet-400 animate-spin" />
         </div>
       </Layout>
     );
-  }
 
   return (
     <Layout>
-      <div className="space-y-6">
+      <div className="relative p-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
+        {/* Floating Clock */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: "easeInOut" }}
+          className="fixed top-4 right-4 md:top-6 md:right-8 bg-gradient-to-r from-violet-600 to-fuchsia-500 px-4 py-2 rounded-full shadow-lg border border-purple-400/40 z-50"
+        >
+          <div className="flex items-center gap-2 text-white font-semibold text-lg">
+            <Clock className="w-5 h-5 animate-pulse" />
+            <motion.span
+              key={clock}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3 }}
+              className="tracking-wider"
+            >
+              {clock}
+            </motion.span>
+          </div>
+        </motion.div>
+
+        {/* Left: Performers */}
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent mb-2">
-            Today's Ritual Schedule
-          </h1>
-          <p className="text-muted-foreground">
-            Monitor and track your performers' elixir regimens
-          </p>
+          <motion.h1
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1 }}
+            className="text-3xl md:text-4xl font-extrabold text-center bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-transparent mb-12"
+          >
+            Performers & Pills Today
+          </motion.h1>
+
+          {performers.length === 0 ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex flex-col items-center justify-center h-[50vh] gap-4 text-purple-300/70"
+            >
+              <Sparkles className="w-12 h-12 text-violet-400 opacity-50 animate-bounce" />
+              <h2 className="text-xl">No performers or medicines yet</h2>
+            </motion.div>
+          ) : (
+            <div className="grid gap-6 md:grid-cols-2">
+              {performers.map((perf, i) => (
+                <motion.div
+                  key={perf.id}
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ delay: i * 0.1, duration: 0.6 }}
+                >
+                  <Card className="bg-gradient-to-br from-black/60 via-violet-900/20 to-black/50 border border-violet-400/20 shadow-xl rounded-2xl backdrop-blur-lg hover:shadow-violet-500/30 hover:scale-[1.02] transition-transform duration-300">
+                    <CardHeader className="flex justify-between items-center">
+                      <CardTitle className="text-xl text-fuchsia-300 flex items-center gap-2">
+                        <Pill className="w-5 h-5 animate-bounce" /> {perf.name}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {perf.medicines?.length > 0 ? (
+                        perf.medicines.map((med, idx) => (
+                          <motion.div
+                            key={med.id}
+                            initial={{ opacity: 0, x: idx % 2 === 0 ? -40 : 40 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.5, delay: idx * 0.1 }}
+                            className="p-4 rounded-lg bg-purple-900/20 border border-purple-500/30 flex flex-col gap-2"
+                          >
+                            <p className="font-medium text-violet-200 text-lg">{med.pill_name}</p>
+                            <p className="text-sm text-purple-300">
+                              Dosage: <span className="text-violet-100">{med.dosage}</span>
+                            </p>
+                            <p className="text-sm text-purple-300">
+                              Time:{" "}
+                              <span className="text-violet-100">
+                                {med.time_of_day
+                                  ? new Date(`1970-01-01T${med.time_of_day}`).toLocaleTimeString([], {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      hour12: true,
+                                    })
+                                  : "N/A"}
+                              </span>
+                            </p>
+                            <p className="text-sm text-purple-300">
+                              Frequency: <span className="text-violet-100">{med.frequency || "N/A"}</span>
+                            </p>
+                          </motion.div>
+                        ))
+                      ) : (
+                        <p className="text-purple-400/60 text-sm">No medicines added for this performer</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {rituals.length === 0 ? (
-          <div className="flex items-center justify-center h-[50vh] flex-col gap-4 text-center">
-             <Sparkles className="w-16 h-16 text-muted-foreground opacity-30" />
-             <h2 className="text-2xl font-semibold text-muted-foreground">No rituals scheduled for today</h2>
+        {/* Right: Adherence Calendar */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.8, delay: 0.2 }}
+          className="bg-black/50 rounded-2xl border border-violet-500/30 shadow-lg p-4 self-start mt-10"
+        >
+          <h2 className="text-lg font-semibold text-violet-300 mb-4 text-center">
+            Adherence Calendar
+          </h2>
+
+          <MedicineCalendar loggedMedicines={loggedMedicines} />
+
+          <div className="mt-4 flex justify-center gap-4 text-sm text-white">
+            <div className="flex items-center gap-1">
+              <span className="w-4 h-4 bg-green-500 rounded-full inline-block"></span> 100%
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-4 h-4 bg-yellow-400 rounded-full inline-block"></span> 50–99%
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-4 h-4 bg-red-500 rounded-full inline-block"></span> 0–49%
+            </div>
           </div>
-        ) : (
-          <div className="grid gap-4">
-            {rituals.map((ritual) => (
-              <Card key={ritual.id} className="bg-secondary/40 border-border/50">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      {getStatusIcon(ritual.status)}
-                      <div>
-                        <CardTitle className="text-xl text-foreground">
-                          {ritual.potion_name}
-                        </CardTitle>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          For Performer: <span className="text-accent">{ritual.performers.name}</span>
-                        </p>
-                      </div>
-                    </div>
-                    <Badge className={`${getStatusBadge(ritual.status)} border`}>
-                      {ritual.status}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-muted-foreground">Dosage:</span>
-                        <span className="text-foreground font-medium">{ritual.dosage}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-muted-foreground">Time:</span>
-                        <span className="text-accent font-medium">{ritual.execution_time}</span>
-                      </div>
-                    </div>
-                    {ritual.status === "Upcoming" && (
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={() => updateRitualStatus(ritual.id, "Taken")}
-                          className="bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30"
-                        >
-                          <CheckCircle2 className="w-4 h-4 mr-2" />
-                          Mark Taken
-                        </Button>
-                        <Button
-                          onClick={() => updateRitualStatus(ritual.id, "Missed")}
-                          variant="outline"
-                          className="border-destructive/30 hover:bg-destructive/10 text-destructive"
-                        >
-                          <XCircle className="w-4 h-4 mr-2" />
-                          Mark Missed
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+
+          {adherenceData && (
+            <div className="mt-6 text-center text-violet-200 space-y-1">
+              <p>Total Logs: {adherenceData.total_logs}</p>
+              <p>Taken: {adherenceData.taken_count}</p>
+              <p>Missed: {adherenceData.missed_count}</p>
+              <p>
+                <strong>Overall Adherence:</strong>{" "}
+                {adherenceData.adherence_percentage
+                  ? `${adherenceData.adherence_percentage}%`
+                  : "N/A"}
+              </p>
+            </div>
+          )}
+        </motion.div>
       </div>
     </Layout>
   );
