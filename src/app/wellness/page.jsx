@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client"; // Make sure client is correct
+import { supabase } from "@/integrations/supabase/client";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, Target } from "lucide-react";
@@ -9,45 +9,95 @@ import Sidebar from "@/components/Sidebar";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 const WellnessPage = () => {
+  const [performers, setPerformers] = useState([]);
+  const [selectedPerformer, setSelectedPerformer] = useState(null);
   const [logData, setLogData] = useState([]);
   const [takenCount, setTakenCount] = useState(0);
   const [missedCount, setMissedCount] = useState(0);
+  const [user, setUser] = useState(null);
 
+  // Fetch user session
   useEffect(() => {
-    const fetchLogs = async () => {
+    const fetchUser = async () => {
       try {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-        const { data, error } = await supabase
-          .from("medicine_logs")
-          .select("status, timestamp")
-          .gte("timestamp", sevenDaysAgo.toISOString());
-
-        if (error) {
-          console.error("Error fetching logs:", error);
-          return;
-        }
-
-        if (!data) {
-          console.warn("No log data returned");
-          return;
-        }
-
-        setLogData(data);
-
-        const taken = data.filter(log => log.status === "Taken").length;
-        const missed = data.filter(log => log.status === "Missed").length;
-
-        setTakenCount(taken);
-        setMissedCount(missed);
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (data?.session?.user) setUser(data.session.user);
       } catch (err) {
-        console.error("Unexpected fetchLogs error:", err);
+        console.error("Error fetching user session:", err);
       }
     };
-
-    fetchLogs();
+    fetchUser();
   }, []);
+
+  // Fetch performers
+  useEffect(() => {
+    if (!user) return;
+    const fetchPerformers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("performers")
+          .select("*")
+          .eq("user_id", user.id);
+
+        if (error) throw error;
+        setPerformers(data || []);
+      } catch (err) {
+        console.error("Error fetching performers:", err);
+      }
+    };
+    fetchPerformers();
+  }, [user]);
+
+  // Fetch logs for selected performer
+// Fetch logs for selected performer
+useEffect(() => {
+  if (!selectedPerformer) {
+    setLogData([]);
+    setTakenCount(0);
+    setMissedCount(0);
+    return;
+  }
+
+  const fetchLogs = async () => {
+    
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      // Fetch logs for all medicines of the performer
+      const { data, error } = await supabase
+        .from("medicine_logs")
+        .select(`
+          status,
+          timestamp,
+          medicines!inner(performer_id)
+        `)
+        .gte("timestamp", sevenDaysAgo.toISOString())
+        .eq("medicines.performer_id", selectedPerformer.id)
+        .order("timestamp", { ascending: true });
+
+      if (error) throw error;
+
+      const logs = data || [];
+
+      // Count taken vs missed
+      const taken = logs.filter((log) => log.status === "Taken").length;
+      const missed = logs.filter((log) => log.status === "Missed").length;
+
+      setLogData(logs);
+      setTakenCount(taken);
+      setMissedCount(missed);
+    } catch (err) {
+      console.error("fetchLogs error:", err);
+      setLogData([]);
+      setTakenCount(0);
+      setMissedCount(0);
+    }
+  };
+
+  fetchLogs();
+}, [selectedPerformer]);
 
   const COLORS = ["#a78bfa", "#f472b6"]; // violet, pink
   const chartData = [
@@ -69,14 +119,29 @@ const WellnessPage = () => {
           initial={{ opacity: 0, y: 50 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 1 }}
-          className="mb-10 text-center relative z-10"
+          className="mb-6 text-center relative z-10"
         >
           <h1 className="text-5xl font-extrabold bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-transparent mb-3">
-            Wellness Rate Dashboard
+            Wellness Dashboard
           </h1>
-          <p className="text-purple-200/60">
-            Track adherence patterns and ritual completion rates
-          </p>
+          <p className="text-purple-200/60">Track adherence per performer</p>
+
+          {/* Performer dropdown */}
+          <select
+            value={selectedPerformer?.id || ""}
+            onChange={(e) => {
+              const perf = performers.find((p) => p.id === Number(e.target.value));
+              setSelectedPerformer(perf || null);
+            }}
+            className="mt-4 px-3 py-2 rounded-lg bg-black/40 border border-purple-500 text-white"
+          >
+            <option value="">Select Performer</option>
+            {performers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </motion.div>
 
         {/* Stats */}
@@ -100,9 +165,7 @@ const WellnessPage = () => {
                     ? ((takenCount / (takenCount + missedCount)) * 100).toFixed(1) + "%"
                     : "0%"}
                 </div>
-                <p className="text-xs text-purple-300/70">
-                  Adherence over last 7 days
-                </p>
+                <p className="text-xs text-purple-300/70">Adherence over last 7 days</p>
               </CardContent>
             </Card>
           </motion.div>
@@ -124,9 +187,7 @@ const WellnessPage = () => {
                 <div className="text-3xl font-bold text-violet-300">
                   {takenCount + missedCount}
                 </div>
-                <p className="text-xs text-purple-300/70">
-                  Taken + Missed entries this week
-                </p>
+                <p className="text-xs text-purple-300/70">Taken + Missed entries</p>
               </CardContent>
             </Card>
           </motion.div>
@@ -149,7 +210,7 @@ const WellnessPage = () => {
             <CardContent className="h-[300px]">
               {takenCount + missedCount === 0 ? (
                 <p className="text-purple-400/70 italic text-center mt-20">
-                  ✨ No logs yet this week ✨
+                  ✨ No logs yet for selected performer ✨
                 </p>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">

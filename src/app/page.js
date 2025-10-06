@@ -17,7 +17,7 @@ const Dashboard = () => {
   const [loggedMedicines, setLoggedMedicines] = useState({});
   const [adherenceData, setAdherenceData] = useState(null);
 
-  // Fetch current user
+  // Fetch current user session
   useEffect(() => {
     const fetchUser = async () => {
       const { data } = await supabase.auth.getSession();
@@ -44,36 +44,63 @@ const Dashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch performers & adherence
-  const fetchData = async () => {
-    if (!user) return;
-    setLoading(true);
+  // Fetch performers + adherence view
+  // Fetch performers + adherence view
+const fetchData = async () => {
+  if (!user) return;
+  setLoading(true);
 
-    try {
-      const { performers, loggedMedicines } = await fetchPerformersWithLogs(user.id);
-      console.log("Fetched performers:", performers);
-      setPerformers(performers || []);
-      setLoggedMedicines(loggedMedicines || {});
+  try {
+    const performersList = await fetchPerformersWithLogs(user.id);
+    console.log("✅ Fetched performers:", performersList);
+    setPerformers(performersList || []);
 
-      const { data: adherenceView, error } = await supabase
-        .from("vw_user_medicine_dashboard")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
+    // Derive logged medicine data from performers
+    const allLogs = {};
+    performersList.forEach((p) => {
+      p.medicines?.forEach((m) => {
+        if (m.medicine_logs?.length) {
+          allLogs[m.id] = m.medicine_logs;
+        }
+      });
+    });
+    setLoggedMedicines(allLogs);
 
-      if (error && error.message) {
-        console.error("View fetch error:", error.message);
-      } else {
-        setAdherenceData(adherenceView || null);
-      }
-    } catch (err) {
-      console.error("fetchData exception:", err);
+    // Fetch adherence summary view
+    const { data: adherenceRows, error } = await supabase
+      .from("vw_user_medicine_dashboard")
+      .select("*")
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("⚠️ View fetch error:", error.message);
+      setAdherenceData(null);
+    } else if (adherenceRows.length === 0) {
+      console.log("📊 No adherence data found");
+      setAdherenceData(null);
+    } else if (adherenceRows.length === 1) {
+      console.log("📊 Adherence view data (single row):", adherenceRows[0]);
+      setAdherenceData(adherenceRows[0]);
+    } else {
+      console.log("📊 Adherence view data (multiple rows):", adherenceRows);
+      // Option 1: Aggregate totals if multiple rows
+      const total_logs = adherenceRows.reduce((sum, row) => sum + row.total_logs, 0);
+      const taken_count = adherenceRows.reduce((sum, row) => sum + row.taken_count, 0);
+      const missed_count = adherenceRows.reduce((sum, row) => sum + row.missed_count, 0);
+      const adherence_percentage =
+        total_logs > 0 ? Math.round((taken_count / total_logs) * 100) : null;
+
+      setAdherenceData({ total_logs, taken_count, missed_count, adherence_percentage });
     }
+  } catch (err) {
+    console.error("❌ fetchData exception:", err);
+    setAdherenceData(null);
+  }
 
-    setLoading(false);
-  };
+  setLoading(false);
+};
 
-  // Auto-fetch + Realtime updates
+  // Auto fetch on user load + realtime updates
   useEffect(() => {
     if (!user) return;
     fetchData();
@@ -100,6 +127,7 @@ const Dashboard = () => {
     };
   }, [user]);
 
+  // Loading state animation
   if (loading)
     return (
       <Layout>
@@ -195,7 +223,8 @@ const Dashboard = () => {
                               </span>
                             </p>
                             <p className="text-sm text-purple-300">
-                              Frequency: <span className="text-violet-100">{med.frequency || "N/A"}</span>
+                              Frequency:{" "}
+                              <span className="text-violet-100">{med.frequency || "N/A"}</span>
                             </p>
                           </motion.div>
                         ))
