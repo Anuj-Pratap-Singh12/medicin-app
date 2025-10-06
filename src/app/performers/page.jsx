@@ -14,9 +14,14 @@ import {
   Save,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { fetchPerformersWithLogs } from "@/integrations/supabase/supabaseHelper";
+
+import { supabase } from "@/integrations/supabase/client";
+import {
+  fetchPerformersWithLogs,
+  logDoseStatus,
+  autoMarkMissedDoses,
+} from "@/integrations/supabase/supabaseHelper";
 
 const PerformersPage = () => {
   const [performers, setPerformers] = useState([]);
@@ -43,11 +48,17 @@ const PerformersPage = () => {
 
     const fetchData = async () => {
       const performersData = await fetchPerformersWithLogs(user.id);
-      const normalized = performersData.map(p => ({
+      const normalized = performersData.map((p) => ({
         ...p,
-        medicines: Array.isArray(p.medicines) ? p.medicines : []
+        medicines: (p.medicines || []).sort((a, b) => {
+          if (!a.time_of_day) return 1;
+          if (!b.time_of_day) return -1;
+          return a.time_of_day.localeCompare(b.time_of_day);
+        }),
       }));
+
       setPerformers(normalized);
+      await autoMarkMissedDoses();
     };
 
     fetchData();
@@ -88,8 +99,11 @@ const PerformersPage = () => {
 
       if (error) throw error;
 
-      const newPerfs = (data || []).map(p => ({ ...p, medicines: [] }));
-      setPerformers(prev => [...(Array.isArray(prev) ? prev : []), ...newPerfs]);
+      const newPerfs = (data || []).map((p) => ({ ...p, medicines: [] }));
+      setPerformers((prev) => [
+        ...(Array.isArray(prev) ? prev : []),
+        ...newPerfs,
+      ]);
       setNewPerformer("");
       toast.success("Performer added!");
     } catch (err) {
@@ -100,7 +114,7 @@ const PerformersPage = () => {
     }
   };
 
-  // Update & Delete performer
+  // Update performer
   const updatePerformer = async (id, name) => {
     try {
       const { error } = await supabase
@@ -108,7 +122,9 @@ const PerformersPage = () => {
         .update({ name })
         .eq("id", id);
       if (error) throw error;
-      setPerformers(prev => prev.map(p => (p.id === id ? { ...p, name } : p)));
+      setPerformers((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, name } : p))
+      );
       setEditPerformer(null);
       toast.success("Performer updated!");
     } catch (err) {
@@ -117,65 +133,97 @@ const PerformersPage = () => {
     }
   };
 
+  // Delete performer
   const deletePerformer = async (id) => {
     if (!confirm("Delete this performer and all related medicines?")) return;
     try {
       const { error } = await supabase.from("performers").delete().eq("id", id);
       if (error) throw error;
-      setPerformers(prev => prev.filter(p => p.id !== id));
+      setPerformers((prev) => prev.filter((p) => p.id !== id));
       toast.success("Performer deleted!");
     } catch {
       toast.error("Failed to delete performer");
     }
   };
 
-  // Add medicine
+  // ✅ FIXED: Add medicine with safe defaults
   const addMedicine = async (performerId) => {
     const formKey = `performer-${performerId}`;
-    const form = medicineForms[formKey];
+    const form = medicineForms[formKey] || {};
 
-    if (!form?.pill_name || !form?.time_of_day || !form?.frequency) {
+    console.log("➡️ addMedicine called with performerId:", performerId);
+    console.log("➡️ medicineForms state:", medicineForms);
+    console.log("➡️ form values:", form);
+
+    if (!form.pill_name || !form.time_of_day) {
       toast.error("Please fill in all fields");
       return;
     }
 
-    const frequency = form.frequency === "Custom" ? form.customFrequency : form.frequency;
+    // Safe default frequency
+    const frequency =
+      form.frequency === "Custom"
+        ? form.customFrequency
+        : form.frequency || "Daily";
+
+    const timeOfDay =
+      form.time_of_day.length === 5
+        ? form.time_of_day + ":00"
+        : form.time_of_day;
 
     try {
       const { data, error } = await supabase
         .from("medicines")
-        .insert([{
-          performer_id: performerId,
-          status: "Upcoming",
-          pill_name: form.pill_name,
-          dosage: form.dosage || "",
-          time_of_day: form.time_of_day,
-          frequency,
-        }])
-        .select("*"); // IMPORTANT: must return inserted rows
+        .insert([
+          {
+            performer_id: Number(performerId),
+            pill_name: form.pill_name,
+            dosage: form.dosage || "",
+            time_of_day: timeOfDay,
+            frequency,
+            status: "Upcoming",
+          },
+        ])
+        .select("*");
 
+      console.log("Supabase insert response:", { data, error });
       if (error) throw error;
 
-      setPerformers(prev =>
-        prev.map(perf =>
-          perf.id === performerId
-            ? { ...perf, medicines: [...(perf.medicines || []), ...(Array.isArray(data) ? data : [])] }
-            : perf
-        )
-      );
+      if (data && data.length > 0) {
+        setPerformers((prev) =>
+          prev.map((p) =>
+            p.id === Number(performerId)
+              ? {
+                  ...p,
+                  medicines: [...(p.medicines || []), ...data].sort((a, b) => {
+                    if (!a.time_of_day) return 1;
+                    if (!b.time_of_day) return -1;
+                    return a.time_of_day.localeCompare(b.time_of_day);
+                  }),
+                }
+              : p
+          )
+        );
+      }
 
-      setMedicineForms(prev => ({
+      setMedicineForms((prev) => ({
         ...prev,
-        [formKey]: { pill_name: "", dosage: "", frequency: "Daily", time_of_day: "" }
+        [formKey]: {
+          pill_name: "",
+          dosage: "",
+          frequency: "Daily",
+          time_of_day: "",
+        },
       }));
       setOpenForm(null);
       toast.success("Medicine added!");
     } catch (err) {
-      console.error("Add medicine error:", err);
+      console.error("❌ Add medicine error:", err);
       toast.error("Failed to add medicine");
     }
   };
 
+  // Update medicine
   const updateMedicine = async (medicineId, performerId) => {
     const updates = medicineForms[medicineId];
     if (!updates || Object.keys(updates).length === 0) {
@@ -184,7 +232,9 @@ const PerformersPage = () => {
     }
 
     const frequency =
-      updates.frequency === "Custom" ? updates.customFrequency : updates.frequency;
+      updates.frequency === "Custom"
+        ? updates.customFrequency
+        : updates.frequency;
 
     try {
       const { error } = await supabase
@@ -199,7 +249,9 @@ const PerformersPage = () => {
             ? {
                 ...perf,
                 medicines: perf.medicines.map((med) =>
-                  med.id === medicineId ? { ...med, ...updates, frequency } : med
+                  med.id === medicineId
+                    ? { ...med, ...updates, frequency }
+                    : med
                 ),
               }
             : perf
@@ -212,15 +264,24 @@ const PerformersPage = () => {
     }
   };
 
+  // Delete medicine
   const deleteMedicine = async (medicineId, performerId) => {
     if (!confirm("Are you sure you want to delete this medicine?")) return;
     try {
-      const { error } = await supabase.from("medicines").delete().eq("id", medicineId);
+      const { error } = await supabase
+        .from("medicines")
+        .delete()
+        .eq("id", medicineId);
       if (error) throw error;
       setPerformers((prev) =>
         prev.map((perf) =>
           perf.id === performerId
-            ? { ...perf, medicines: perf.medicines.filter((med) => med.id !== medicineId) }
+            ? {
+                ...perf,
+                medicines: perf.medicines.filter(
+                  (med) => med.id !== medicineId
+                ),
+              }
             : perf
         )
       );
@@ -229,79 +290,54 @@ const PerformersPage = () => {
       toast.error("Failed to delete medicine");
     }
   };
+  // 🧩 Refresh performers and medicines after status update
+const refreshData = async () => {
+  if (!user) return;
+  const performersData = await fetchPerformersWithLogs(user.id);
+  const normalized = performersData.map((p) => ({
+    ...p,
+    medicines: (p.medicines || []).sort((a, b) => {
+      if (!a.time_of_day) return 1;
+      if (!b.time_of_day) return -1;
+      return a.time_of_day.localeCompare(b.time_of_day);
+    }),
+  }));
+  setPerformers(normalized);
+};
+
 
   // Log status
-  const handleLogStatus = async (medicine, status) => {
+ // ✅ Log status + refresh immediately
+const handleLogStatus = async (medicine, status) => {
   if (!medicine?.id) {
     toast.error("Invalid medicine");
     return;
   }
 
-  const today = new Date().toISOString().split("T")[0];
+  console.log("Logging dose:", { medicineId: medicine.id, status });
 
-  try {
-    // 1. Check if a log already exists
-    const { data: existingLog, error: fetchError } = await supabase
-      .from("medicine_logs")
-      .select("id, status, timestamp")
-      .eq("medicine_id", medicine.id)
-      .gte("timestamp", `${today}T00:00:00Z`)
-      .lte(`${today}T23:59:59Z`)
-      .maybeSingle();
-
-    if (fetchError && Object.keys(fetchError).length > 0) {
-      console.warn("Supabase fetch error (ignored if empty):", fetchError);
-    }
-
-    // 2. Update or insert log
-    if (existingLog) {
-      const { error: updateError } = await supabase
-        .from("medicine_logs")
-        .update({ status })
-        .eq("id", existingLog.id);
-
-      if (updateError && Object.keys(updateError).length > 0) {
-        console.warn("Supabase update error:", updateError);
-      }
-    } else {
-      const { error: insertError } = await supabase
-        .from("medicine_logs")
-        .insert([{ medicine_id: medicine.id, status }]);
-
-      if (insertError && Object.keys(insertError).length > 0) {
-        console.warn("Supabase insert error:", insertError);
-      }
-    }
-
-    // 3. Update medicine status
-    const { error: medUpdateError } = await supabase
-      .from("medicines")
-      .update({ status })
-      .eq("id", medicine.id);
-
-    if (medUpdateError && Object.keys(medUpdateError).length > 0) {
-      console.warn("Supabase medicine update error:", medUpdateError);
-    }
-
-    // 4. Update UI
-    setPerformers(prev =>
-      prev.map(perf => ({
-        ...perf,
-        medicines: perf.medicines.map(med =>
-          med.id === medicine.id ? { ...med, status } : med
-        ),
-      }))
-    );
-
-    toast.success(`Marked as ${status}!`);
-  } catch (err) {
-    // Safely log unknown errors
-    console.error("Error logging medicine status:", err);
-    toast.error("Failed to save status");
+  const success = await logDoseStatus(medicine.id, status);
+  if (!success) {
+    toast.error("Failed to log status");
+    return;
   }
+
+  // 🔁 Immediately update local UI
+  setPerformers((prev) =>
+    prev.map((perf) => ({
+      ...perf,
+      medicines: perf.medicines.map((med) =>
+        med.id === medicine.id ? { ...med, status } : med
+      ),
+    }))
+  );
+
+  toast.success(`Marked as ${status}`);
+
+  // 🔄 Refresh from backend (important for charts or synced data)
+  await refreshData();
 };
 
-  // Helper: time left
   const getTimeLeft = (time) => {
     if (!time) return "No time set";
     const now = new Date();
@@ -328,7 +364,9 @@ const PerformersPage = () => {
           <h1 className="text-4xl font-extrabold bg-gradient-to-r from-purple-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-transparent animate-pulse mb-2">
             Performers & Medicines
           </h1>
-          <p className="text-purple-300/70">Manage performers, pill schedules, and logs</p>
+          <p className="text-purple-300/70">
+            Manage performers, pill schedules, and logs
+          </p>
         </motion.div>
 
         {/* Add performer */}
@@ -345,14 +383,16 @@ const PerformersPage = () => {
             disabled={loading}
             className="bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-2"
           >
-            <PlusCircle className="w-4 h-4" /> {loading ? "Adding..." : "Add Performer"}
+            <PlusCircle className="w-4 h-4" />{" "}
+            {loading ? "Adding..." : "Add Performer"}
           </Button>
         </div>
 
         {/* Performer Cards */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           <AnimatePresence>
-            {Array.isArray(performers) && performers.length > 0 &&
+            {Array.isArray(performers) &&
+              performers.length > 0 &&
               performers.map((performer) => (
                 <motion.div
                   key={performer.id}
@@ -368,21 +408,33 @@ const PerformersPage = () => {
                       <input
                         type="text"
                         defaultValue={performer.name}
-                        onBlur={(e) => updatePerformer(performer.id, e.target.value)}
+                        onBlur={(e) =>
+                          updatePerformer(performer.id, e.target.value)
+                        }
                         className="bg-black/50 border border-purple-500 rounded-lg px-2 py-1 text-white w-full"
                         autoFocus
                       />
                     ) : (
                       <div className="flex items-center gap-2">
                         <Users className="w-8 h-8 text-purple-400" />
-                        <h2 className="font-semibold text-purple-200">{performer.name}</h2>
+                        <h2 className="font-semibold text-purple-200">
+                          {performer.name}
+                        </h2>
                       </div>
                     )}
                     <div className="flex gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => setEditPerformer(performer.id)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditPerformer(performer.id)}
+                      >
                         <Edit className="w-4 h-4 text-purple-300" />
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => deletePerformer(performer.id)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => deletePerformer(performer.id)}
+                      >
                         <Trash2 className="w-4 h-4 text-red-400" />
                       </Button>
                     </div>
@@ -399,12 +451,21 @@ const PerformersPage = () => {
                         exit={{ opacity: 0, y: -10 }}
                         className="relative p-3 border border-purple-600 rounded-lg bg-purple-950/50 flex flex-col gap-2"
                       >
-                        {/* Edit/Delete buttons */}
                         <div className="absolute top-2 right-2 flex gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => setEditMedicine(med.id)}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditMedicine(med.id)}
+                          >
                             <Edit className="w-4 h-4 text-purple-300" />
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => deleteMedicine(med.id, performer.id)}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              deleteMedicine(med.id, performer.id)
+                            }
+                          >
                             <Trash2 className="w-4 h-4 text-red-400" />
                           </Button>
                         </div>
@@ -418,7 +479,10 @@ const PerformersPage = () => {
                               onChange={(e) =>
                                 setMedicineForms((prev) => ({
                                   ...prev,
-                                  [med.id]: { ...prev[med.id], pill_name: e.target.value },
+                                  [med.id]: {
+                                    ...prev[med.id],
+                                    pill_name: e.target.value,
+                                  },
                                 }))
                               }
                               className="px-2 py-1 border rounded-lg bg-black/60 text-white"
@@ -430,7 +494,10 @@ const PerformersPage = () => {
                               onChange={(e) =>
                                 setMedicineForms((prev) => ({
                                   ...prev,
-                                  [med.id]: { ...prev[med.id], dosage: e.target.value },
+                                  [med.id]: {
+                                    ...prev[med.id],
+                                    dosage: e.target.value,
+                                  },
                                 }))
                               }
                               className="px-2 py-1 border rounded-lg bg-black/60 text-white"
@@ -441,7 +508,10 @@ const PerformersPage = () => {
                               onChange={(e) =>
                                 setMedicineForms((prev) => ({
                                   ...prev,
-                                  [med.id]: { ...prev[med.id], time_of_day: e.target.value },
+                                  [med.id]: {
+                                    ...prev[med.id],
+                                    time_of_day: e.target.value,
+                                  },
                                 }))
                               }
                               className="px-2 py-1 border rounded-lg bg-black/60 text-white"
@@ -451,7 +521,10 @@ const PerformersPage = () => {
                               onChange={(e) =>
                                 setMedicineForms((prev) => ({
                                   ...prev,
-                                  [med.id]: { ...prev[med.id], frequency: e.target.value },
+                                  [med.id]: {
+                                    ...prev[med.id],
+                                    frequency: e.target.value,
+                                  },
                                 }))
                               }
                               className="px-2 py-1 border rounded-lg bg-black/60 text-white"
@@ -467,14 +540,19 @@ const PerformersPage = () => {
                                 onChange={(e) =>
                                   setMedicineForms((prev) => ({
                                     ...prev,
-                                    [med.id]: { ...prev[med.id], customFrequency: e.target.value },
+                                    [med.id]: {
+                                      ...prev[med.id],
+                                      customFrequency: e.target.value,
+                                    },
                                   }))
                                 }
                                 className="px-2 py-1 border rounded-lg bg-black/60 text-white"
                               />
                             )}
                             <Button
-                              onClick={() => updateMedicine(med.id, performer.id)}
+                              onClick={() =>
+                                updateMedicine(med.id, performer.id)
+                              }
                               className="bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1"
                             >
                               <Save className="w-4 h-4" /> Save
@@ -485,25 +563,41 @@ const PerformersPage = () => {
                             <div className="flex items-center gap-2">
                               <Pill className="w-5 h-5 text-green-400" />
                               <div>
-                                <p className="font-medium text-purple-200">{med.pill_name} ({med.dosage})</p>
-                                <p className="text-xs text-purple-400">{med.time_of_day} • {med.frequency} ({getTimeLeft(med.time_of_day)})</p>
+                                <p className="font-medium text-purple-200">
+                                  {med.pill_name} ({med.dosage})
+                                </p>
+                                <p className="text-xs text-purple-400">
+                                  {med.time_of_day} • {med.frequency} (
+                                  {getTimeLeft(med.time_of_day)})
+                                </p>
                               </div>
                             </div>
                             <div className="flex gap-2 mt-2">
                               <Button
                                 size="sm"
-                                className={`flex-1 ${med.status === "Taken" ? "bg-green-600 text-black" : "bg-purple-700 text-white hover:bg-purple-800"}`}
-                                onClick={() => handleLogStatus(med, "Taken")}
+                                className={`flex-1 ${
+                                  med.status === "Taken"
+                                    ? "bg-green-600 text-black"
+                                    : "bg-purple-700 text-white"
+                                }`}
+                                onClick={() =>
+                                  handleLogStatus(med, "Taken")
+                                }
                               >
-                                Taken
+                                <CheckCircle2 className="w-4 h-4 mr-1" /> Taken
                               </Button>
-
                               <Button
                                 size="sm"
-                                className={`flex-1 ${med.status === "Missed" ? "bg-red-600 text-black" : "bg-purple-700 text-white hover:bg-purple-800"}`}
-                                onClick={() => handleLogStatus(med, "Missed")}
+                                className={`flex-1 ${
+                                  med.status === "Missed"
+                                    ? "bg-red-600 text-black"
+                                    : "bg-purple-700 text-white"
+                                }`}
+                                onClick={() =>
+                                  handleLogStatus(med, "Missed")
+                                }
                               >
-                                Missed
+                                <XCircle className="w-4 h-4 mr-1" /> Missed
                               </Button>
                             </div>
                           </>
@@ -512,17 +606,19 @@ const PerformersPage = () => {
                     ))}
                   </AnimatePresence>
 
-                  {/* Add medicine form */}
+                  {/* ✅ Add Medicine Button */}
                   {openForm === performer.id ? (
-                    <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-2 mt-3 border-t border-purple-700 pt-3">
+                    <div className="mt-3 flex flex-col gap-2">
                       <input
                         type="text"
-                        placeholder="Pill name"
-                        value={medicineForms[`performer-${performer.id}`]?.pill_name || ""}
+                        placeholder="Medicine name"
                         onChange={(e) =>
                           setMedicineForms((prev) => ({
                             ...prev,
-                            [`performer-${performer.id}`]: { ...prev[`performer-${performer.id}`], pill_name: e.target.value },
+                            [`performer-${performer.id}`]: {
+                              ...prev[`performer-${performer.id}`],
+                              pill_name: e.target.value,
+                            },
                           }))
                         }
                         className="px-2 py-1 border rounded-lg bg-black/60 text-white"
@@ -530,32 +626,38 @@ const PerformersPage = () => {
                       <input
                         type="text"
                         placeholder="Dosage"
-                        value={medicineForms[`performer-${performer.id}`]?.dosage || ""}
                         onChange={(e) =>
                           setMedicineForms((prev) => ({
                             ...prev,
-                            [`performer-${performer.id}`]: { ...prev[`performer-${performer.id}`], dosage: e.target.value },
+                            [`performer-${performer.id}`]: {
+                              ...prev[`performer-${performer.id}`],
+                              dosage: e.target.value,
+                            },
                           }))
                         }
                         className="px-2 py-1 border rounded-lg bg-black/60 text-white"
                       />
                       <input
                         type="time"
-                        value={medicineForms[`performer-${performer.id}`]?.time_of_day || ""}
                         onChange={(e) =>
                           setMedicineForms((prev) => ({
                             ...prev,
-                            [`performer-${performer.id}`]: { ...prev[`performer-${performer.id}`], time_of_day: e.target.value },
+                            [`performer-${performer.id}`]: {
+                              ...prev[`performer-${performer.id}`],
+                              time_of_day: e.target.value,
+                            },
                           }))
                         }
                         className="px-2 py-1 border rounded-lg bg-black/60 text-white"
                       />
                       <select
-                        value={medicineForms[`performer-${performer.id}`]?.frequency || "Daily"}
                         onChange={(e) =>
                           setMedicineForms((prev) => ({
                             ...prev,
-                            [`performer-${performer.id}`]: { ...prev[`performer-${performer.id}`], frequency: e.target.value },
+                            [`performer-${performer.id}`]: {
+                              ...prev[`performer-${performer.id}`],
+                              frequency: e.target.value,
+                            },
                           }))
                         }
                         className="px-2 py-1 border rounded-lg bg-black/60 text-white"
@@ -564,45 +666,50 @@ const PerformersPage = () => {
                         <option value="Weekly">Weekly</option>
                         <option value="Custom">Custom</option>
                       </select>
-                      {medicineForms[`performer-${performer.id}`]?.frequency === "Custom" && (
+
+                      {medicineForms[`performer-${performer.id}`]?.frequency ===
+                        "Custom" && (
                         <input
                           type="text"
                           placeholder="Custom frequency"
                           onChange={(e) =>
                             setMedicineForms((prev) => ({
                               ...prev,
-                              [`performer-${performer.id}`]: { ...prev[`performer-${performer.id}`], customFrequency: e.target.value },
+                              [`performer-${performer.id}`]: {
+                                ...prev[`performer-${performer.id}`],
+                                customFrequency: e.target.value,
+                              },
                             }))
                           }
                           className="px-2 py-1 border rounded-lg bg-black/60 text-white"
                         />
                       )}
-                      <Button onClick={() => addMedicine(performer.id)} className="bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1">
-                        <PlusCircle className="w-4 h-4" /> Add Medicine
+
+                      <Button
+                        onClick={() => addMedicine(performer.id)}
+                        className="bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1"
+                      >
+                        <Pill className="w-4 h-4" /> Add Medicine
                       </Button>
-                    </motion.div>
+                    </div>
                   ) : (
                     <Button
-  variant="outline"
-  className="mt-3 text-purple-400 border-purple-500 hover:bg-purple-900/20"
-  onClick={() => {
-    setOpenForm(performer.id);
-    // Initialize the form object if it doesn't exist
-    setMedicineForms(prev => ({
-      ...prev,
-      [`performer-${performer.id}`]: prev[`performer-${performer.id}`] || {
-        pill_name: "",
-        dosage: "",
-        time_of_day: "",
-        frequency: "Daily",
-        customFrequency: "",
-      }
-    }));
-  }}
->
-  <PlusCircle className="w-4 h-4 mr-1" /> Add Medicine
-</Button>
-
+                      onClick={() => {
+                        setOpenForm(performer.id);
+                        setMedicineForms((prev) => ({
+                          ...prev,
+                          [`performer-${performer.id}`]: {
+                            pill_name: "",
+                            dosage: "",
+                            frequency: "Daily",
+                            time_of_day: "",
+                          },
+                        }));
+                      }}
+                      className="mt-4 bg-purple-700 hover:bg-purple-800 text-white flex items-center gap-2"
+                    >
+                      <PlusCircle className="w-4 h-4" /> Add Medicine
+                    </Button>
                   )}
                 </motion.div>
               ))}
