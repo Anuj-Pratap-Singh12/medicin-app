@@ -1,23 +1,66 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { Sparkles, Clock, Pill } from "lucide-react";
-import { fetchPerformersWithLogs } from "@/integrations/supabase/supabaseHelper";
+import { Sparkles, Pill, User, CheckCircle } from "lucide-react";
+import { fetchPerformersWithLogs } from "@/integrations/supabase/frontendHelper";
 import MedicineCalendar from "@/components/MedicineCalendar";
+
+// 🩺 Typing Animated Heading with stethoscope emoji + ⚕️ symbol
+const AnimatedGradientHeading = () => {
+  const fullText = "Welcome to MedTrack";
+  const [displayedText, setDisplayedText] = useState("");
+
+  useEffect(() => {
+    let i = 0;
+    const interval = setInterval(() => {
+      setDisplayedText(fullText.slice(0, i + 1));
+      i++;
+      if (i === fullText.length) clearInterval(interval);
+    }, 4000 / fullText.length); // ~4s total typing
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <motion.div
+      className="flex items-center justify-center gap-3 mb-3"
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 1 }}
+    >
+      <span style={{ fontSize: "2.8rem" }}>🩺</span>
+      <motion.h1
+        className="gradient-text font-extrabold text-center"
+        style={{
+          fontSize: "3.8rem",
+          fontWeight: 900,
+          lineHeight: 1.1,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {displayedText}
+      </motion.h1>
+      <motion.span
+        style={{ fontSize: "3.2rem" }}
+        animate={{ y: [0, -10, 0, 8, 0], scale: [1, 1.05, 1] }}
+        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+      >
+        ⚕️
+      </motion.span>
+    </motion.div>
+  );
+};
 
 const Dashboard = () => {
   const [performers, setPerformers] = useState([]);
   const [user, setUser] = useState(null);
-  const [clock, setClock] = useState("");
   const [loading, setLoading] = useState(true);
   const [loggedMedicines, setLoggedMedicines] = useState({});
   const [adherenceData, setAdherenceData] = useState(null);
 
-  // Fetch current user session
   useEffect(() => {
     const fetchUser = async () => {
       const { data } = await supabase.auth.getSession();
@@ -26,258 +69,251 @@ const Dashboard = () => {
     fetchUser();
   }, []);
 
-  // Clock updater
-  useEffect(() => {
-    const updateClock = () => {
-      const now = new Date();
-      setClock(
-        now.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: true,
-        })
-      );
-    };
-    updateClock();
-    const interval = setInterval(updateClock, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Fetch performers + adherence view
-  // Fetch performers + adherence view
-const fetchData = async () => {
-  if (!user) return;
-  setLoading(true);
-
-  try {
-    const performersList = await fetchPerformersWithLogs(user.id);
-    console.log("✅ Fetched performers:", performersList);
-    setPerformers(performersList || []);
-
-    // Derive logged medicine data from performers
-    const allLogs = {};
-    performersList.forEach((p) => {
-      p.medicines?.forEach((m) => {
-        if (m.medicine_logs?.length) {
-          allLogs[m.id] = m.medicine_logs;
-        }
-      });
-    });
-    setLoggedMedicines(allLogs);
-
-    // Fetch adherence summary view
-    const { data: adherenceRows, error } = await supabase
-      .from("vw_user_medicine_dashboard")
-      .select("*")
-      .eq("user_id", user.id);
-
-    if (error) {
-      console.error("⚠️ View fetch error:", error.message);
-      setAdherenceData(null);
-    } else if (adherenceRows.length === 0) {
-      console.log("📊 No adherence data found");
-      setAdherenceData(null);
-    } else if (adherenceRows.length === 1) {
-      console.log("📊 Adherence view data (single row):", adherenceRows[0]);
-      setAdherenceData(adherenceRows[0]);
-    } else {
-      console.log("📊 Adherence view data (multiple rows):", adherenceRows);
-      // Option 1: Aggregate totals if multiple rows
-      const total_logs = adherenceRows.reduce((sum, row) => sum + row.total_logs, 0);
-      const taken_count = adherenceRows.reduce((sum, row) => sum + row.taken_count, 0);
-      const missed_count = adherenceRows.reduce((sum, row) => sum + row.missed_count, 0);
-      const adherence_percentage =
-        total_logs > 0 ? Math.round((taken_count / total_logs) * 100) : null;
-
-      setAdherenceData({ total_logs, taken_count, missed_count, adherence_percentage });
-    }
-  } catch (err) {
-    console.error("❌ fetchData exception:", err);
-    setAdherenceData(null);
-  }
-
-  setLoading(false);
-};
-
-  // Auto fetch on user load + realtime updates
-  useEffect(() => {
+  const fetchData = async () => {
     if (!user) return;
-    fetchData();
+    setLoading(true);
+    try {
+      const performersList = await fetchPerformersWithLogs(user.id);
+      setPerformers(performersList || []);
+      const allLogs = {};
+      performersList.forEach((p) => {
+        p.medicines?.forEach((m) => {
+          if (m.medicine_logs?.length) allLogs[m.id] = m.medicine_logs;
+        });
+      });
+      setLoggedMedicines(allLogs);
+      const { data: adherenceRows } = await supabase
+        .from("vw_user_medicine_dashboard")
+        .select("*")
+        .eq("user_id", user.id);
+      if (adherenceRows && adherenceRows.length > 0) {
+        const total_logs = adherenceRows.reduce((s, r) => s + r.total_logs, 0);
+        const taken_count = adherenceRows.reduce((s, r) => s + r.taken_count, 0);
+        const missed_count = adherenceRows.reduce((s, r) => s + r.missed_count, 0);
+        const adherence_percentage =
+          total_logs > 0 ? Math.round((taken_count / total_logs) * 100) : null;
+        setAdherenceData({ total_logs, taken_count, missed_count, adherence_percentage });
+      }
+    } catch (err) {
+      console.error("❌ fetchData exception:", err);
+      setAdherenceData(null);
+    }
+    setLoading(false);
+  };
 
-    const perfChannel = supabase
-      .channel("performers-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "performers" }, fetchData)
-      .subscribe();
-
-    const medChannel = supabase
-      .channel("medicines-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "medicines" }, fetchData)
-      .subscribe();
-
-    const logChannel = supabase
-      .channel("medicine_logs-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "medicine_logs" }, fetchData)
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(perfChannel);
-      supabase.removeChannel(medChannel);
-      supabase.removeChannel(logChannel);
-    };
+  useEffect(() => {
+    if (user) fetchData();
   }, [user]);
 
-  // Loading state animation
   if (loading)
     return (
       <Layout>
-        <div className="flex items-center justify-center h-[60vh]">
-          <Sparkles className="w-8 h-8 text-violet-400 animate-spin" />
+        <div
+          className="flex flex-col items-center justify-center min-h-[70vh]"
+          style={{
+            background:
+              "linear-gradient(180deg,#22216a 0%, #240c4a 38%, #140c2a 100%)",
+          }}
+        >
+          <motion.div
+            animate={{ rotate: 360, scale: [1, 1.15, 1] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            className="p-4 rounded-full"
+            style={{
+              background: "linear-gradient(90deg,#6a5cff, #7e56ff)",
+              boxShadow: "0 12px 48px rgba(124,109,255,0.24)",
+            }}
+          >
+            <Sparkles className="w-10 h-10 text-white/95" />
+          </motion.div>
+          <motion.p
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1.1 }}
+            className="mt-6 text-[#e6e6ff] text-lg"
+          >
+            Syncing your MedTrack universe...
+          </motion.p>
         </div>
       </Layout>
     );
 
   return (
     <Layout>
-      <div className="relative p-6 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
-        {/* Floating Clock */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeInOut" }}
-          className="fixed top-4 right-4 md:top-6 md:right-8 bg-gradient-to-r from-violet-600 to-fuchsia-500 px-4 py-2 rounded-full shadow-lg border border-purple-400/40 z-50"
+      <div
+        className="relative min-h-screen overflow-hidden text-white"
+        style={{
+          background:
+            "linear-gradient(180deg,#22216a 0%, #240c4a 24%, #140c2a 100%)",
+        }}
+      >
+        {/* --- HEADER --- */}
+        <div
+          className="relative flex flex-col items-center justify-center px-2 pt-12 pb-2 max-w-3xl mx-auto w-full"
+          style={{ zIndex: 2 }}
         >
-          <div className="flex items-center gap-2 text-white font-semibold text-lg">
-            <Clock className="w-5 h-5 animate-pulse" />
-            <motion.span
-              key={clock}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3 }}
-              className="tracking-wider"
-            >
-              {clock}
-            </motion.span>
-          </div>
-        </motion.div>
-
-        {/* Left: Performers */}
-        <div>
-          <motion.h1
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 1 }}
-            className="text-3xl md:text-4xl font-extrabold text-center bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-transparent mb-12"
+          <AnimatedGradientHeading />
+          <div
+            className="mt-3 mb-1 font-bold text-[#b3a4ff] flex items-center gap-2 justify-center subheading"
+            style={{ fontSize: "1.7rem" }}
           >
-            Performers & Pills Today
-          </motion.h1>
-
-          {performers.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex flex-col items-center justify-center h-[50vh] gap-4 text-purple-300/70"
-            >
-              <Sparkles className="w-12 h-12 text-violet-400 opacity-50 animate-bounce" />
-              <h2 className="text-xl">No performers or medicines yet</h2>
-            </motion.div>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2">
-              {performers.map((perf, i) => (
-                <motion.div
-                  key={perf.id}
-                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ delay: i * 0.1, duration: 0.6 }}
-                >
-                  <Card className="bg-gradient-to-br from-black/60 via-violet-900/20 to-black/50 border border-violet-400/20 shadow-xl rounded-2xl backdrop-blur-lg hover:shadow-violet-500/30 hover:scale-[1.02] transition-transform duration-300">
-                    <CardHeader className="flex justify-between items-center">
-                      <CardTitle className="text-xl text-fuchsia-300 flex items-center gap-2">
-                        <Pill className="w-5 h-5 animate-bounce" /> {perf.name}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      {perf.medicines?.length > 0 ? (
-                        perf.medicines.map((med, idx) => (
-                          <motion.div
-                            key={med.id}
-                            initial={{ opacity: 0, x: idx % 2 === 0 ? -40 : 40 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ duration: 0.5, delay: idx * 0.1 }}
-                            className="p-4 rounded-lg bg-purple-900/20 border border-purple-500/30 flex flex-col gap-2"
-                          >
-                            <p className="font-medium text-violet-200 text-lg">{med.pill_name}</p>
-                            <p className="text-sm text-purple-300">
-                              Dosage: <span className="text-violet-100">{med.dosage}</span>
-                            </p>
-                            <p className="text-sm text-purple-300">
-                              Time:{" "}
-                              <span className="text-violet-100">
-                                {med.time_of_day
-                                  ? new Date(`1970-01-01T${med.time_of_day}`).toLocaleTimeString([], {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                      hour12: true,
-                                    })
-                                  : "N/A"}
-                              </span>
-                            </p>
-                            <p className="text-sm text-purple-300">
-                              Frequency:{" "}
-                              <span className="text-violet-100">{med.frequency || "N/A"}</span>
-                            </p>
-                          </motion.div>
-                        ))
-                      ) : (
-                        <p className="text-purple-400/60 text-sm">No medicines added for this performer</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
-          )}
+            <User className="animated-icon w-6 h-6 text-[#6a5cff]" />
+            Hello{" "}
+            <span style={{ color: "#b3a4ff", fontWeight: 700 }}>
+              {user?.user_metadata?.name || "User"}
+            </span>
+            <span>Check your scheduled medicines</span>
+          </div>
+          <div className="subheading-tip">
+            <CheckCircle className="animated-icon w-6 h-6 text-[#ff8ab8]" />
+            Consistency leads to better health.
+          </div>
         </div>
 
-        {/* Right: Adherence Calendar */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.8, delay: 0.2 }}
-          className="bg-black/50 rounded-2xl border border-violet-500/30 shadow-lg p-4 self-start mt-10"
-        >
-          <h2 className="text-lg font-semibold text-violet-300 mb-4 text-center">
-            Adherence Calendar
-          </h2>
-
-          <MedicineCalendar loggedMedicines={loggedMedicines} />
-
-          <div className="mt-4 flex justify-center gap-4 text-sm text-white">
-            <div className="flex items-center gap-1">
-              <span className="w-4 h-4 bg-green-500 rounded-full inline-block"></span> 100%
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="w-4 h-4 bg-yellow-400 rounded-full inline-block"></span> 50–99%
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="w-4 h-4 bg-red-500 rounded-full inline-block"></span> 0–49%
-            </div>
+        {/* --- MAIN CONTENT --- */}
+        <div className="w-full" style={{ height: "2.3rem" }} />
+        <div className="px-2 md:px-8 mt-4 mb-6 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8 items-start w-full">
+          {/* Medicine boxes */}
+          <div className="flex flex-col gap-6 w-full items-end">
+            {performers.map((perf, i) => (
+              <Card
+                key={perf.id}
+                className="bg-white/4 glassy rounded-2xl shadow-2xl hover:shadow-[#6a5cff]/18 medicine-box-anim"
+                style={{
+                  maxWidth: "98%",
+                  minWidth: "220px",
+                  width: "100%",
+                  animationDelay: `${i * 0.14}s`,
+                }}
+              >
+                <CardHeader>
+                  <CardTitle className="text-[#f8f8ff] flex items-center gap-3 text-2xl">
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                      style={{
+                        background:
+                          "linear-gradient(90deg,#b3a4ff,#6a5cff)",
+                        boxShadow:
+                          "0 8px 24px rgba(124,109,255,0.13)",
+                      }}
+                    >
+                      <Pill className="w-4 h-4 text-white" />
+                    </div>
+                    {perf.name}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {perf.medicines.map((med, idx) => (
+                    <motion.div
+                      key={med.id}
+                      initial={{ opacity: 0, x: idx % 2 === 0 ? -14 : 14 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.45, delay: idx * 0.06 }}
+                      className="p-3 rounded-xl flex items-start justify-between gap-4 glassy"
+                      style={{
+                        border: "1px solid rgba(179,164,255,0.11)",
+                      }}
+                    >
+                      <div>
+                        <p className="font-semibold text-[#e9e7ff] text-lg">
+                          {med.pill_name}
+                        </p>
+                        <p className="text-sm text-[#f8f8ff]/80">
+                          💊 Dosage: {med.dosage}
+                        </p>
+                        <p className="text-sm text-[#f8f8ff]/80">
+                          🕓 Time:{" "}
+                          {new Date(
+                            `1970-01-01T${med.time_of_day}`
+                          ).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true,
+                          })}
+                        </p>
+                        <p className="text-sm text-[#f8f8ff]/80">
+                          🔁 {med.frequency}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <div
+                          className="w-9 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold"
+                          style={{
+                            background:
+                              "linear-gradient(90deg, rgba(179,164,255,0.13), rgba(106,92,255,0.08))",
+                            border:
+                              "1px solid rgba(255,255,255,0.02)",
+                            boxShadow:
+                              "0 6px 18px rgba(99,102,241,0.04)",
+                          }}
+                        >
+                          {med.short_label || "Pill"}
+                        </div>
+                        <motion.div
+                          animate={{ scale: [1, 1.06, 1] }}
+                          transition={{
+                            repeat: Infinity,
+                            duration: 2.2,
+                            ease: "easeInOut",
+                          }}
+                          className="w-8 h-8 rounded-full flex items-center justify-center"
+                          style={{
+                            background:
+                              "linear-gradient(90deg, rgba(179,164,255,0.24), rgba(106,92,255,0.18))",
+                            boxShadow:
+                              "0 6px 20px rgba(106,92,255,0.08)",
+                          }}
+                        >
+                          <Pill className="w-4 h-4" />
+                        </motion.div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </CardContent>
+              </Card>
+            ))}
           </div>
 
-          {adherenceData && (
-            <div className="mt-6 text-center text-violet-200 space-y-1">
-              <p>Total Logs: {adherenceData.total_logs}</p>
-              <p>Taken: {adherenceData.taken_count}</p>
-              <p>Missed: {adherenceData.missed_count}</p>
-              <p>
-                <strong>Overall Adherence:</strong>{" "}
-                {adherenceData.adherence_percentage
-                  ? `${adherenceData.adherence_percentage}%`
-                  : "N/A"}
-              </p>
+          {/* Calendar */}
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1.15 }}
+            className="bg-white/3 glassy rounded-2xl p-6 shadow-2xl mb-4 calendar-anim"
+            style={{ width: "100%" }}
+          >
+            <div className="adherence-calendar-title">
+              Adherence Calendar
             </div>
-          )}
-        </motion.div>
+            <div className="mb-6">
+              <MedicineCalendar loggedMedicines={loggedMedicines} />
+            </div>
+            {adherenceData && (
+              <div
+                className="adherence-stats text-center text-[#f8f8ff]"
+                style={{ position: "relative" }}
+              >
+                <div className="adherence-icon-row">
+                  <CheckCircle className="adherence-icon text-[#ff8ab8]" />
+                  <Pill className="adherence-icon text-[#b3a4ff]" />
+                  <Pill className="adherence-icon text-[#6a5cff]" />
+                  <Pill className="adherence-icon text-[#ff8ab8]" />
+                </div>
+                <div className="adherence-words">
+                  <p>Total Logs: {adherenceData.total_logs}</p>
+                  <p>Taken: {adherenceData.taken_count}</p>
+                  <p>Missed: {adherenceData.missed_count}</p>
+                  <p>
+                    Overall Adherence:{" "}
+                    <span className="font-bold">
+                      {adherenceData.adherence_percentage || "N/A"}%
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </div>
       </div>
     </Layout>
   );
