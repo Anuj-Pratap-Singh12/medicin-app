@@ -8,22 +8,34 @@ import { toast } from "sonner";
 // ---------------------------------------------
 export async function fetchPerformersWithLogs(userId) {
   try {
-    const { data: performers, error: performersError } = await supabase
+    const { data: performers, error } = await supabase
       .from("performers")
-      .select(
-        `
-        id, name,
+      .select(`
+        id,
+        name,
         medicines (
-          id, pill_name, dosage, time_of_day, frequency, status,
-          medicine_logs ( id, status, timestamp )
+          id,
+          pill_name,
+          dosage,
+          time_of_day,
+          frequency,
+          status,
+          medicine_logs (
+            id,
+            status,
+            timestamp
+          )
         )
-      `
-      )
+      `)
       .eq("user_id", userId)
       .order("id", { ascending: true });
 
-    if (performersError) throw performersError;
-    return performers || [];
+    if (error) throw error;
+
+    return (performers || []).map((p) => ({
+      ...p,
+      medicines: Array.isArray(p.medicines) ? p.medicines : [],
+    }));
   } catch (err) {
     console.error("fetchPerformersWithLogs failed:", err);
     toast.error("Could not load performers");
@@ -33,41 +45,57 @@ export async function fetchPerformersWithLogs(userId) {
 
 // ---------------------------------------------
 // Log dose status (Taken / Missed)
+// with ±30 min restriction
 // ---------------------------------------------
 export async function logDoseStatus(medicineId, status) {
   try {
-    // Check if already logged today
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const now = new Date().toISOString();
+    const today = new Date().toISOString().split("T")[0];
 
-    const { data: existing } = await supabase
+    // Check if a log for today already exists
+    const { data: existingLogs, error: fetchError } = await supabase
       .from("medicine_logs")
-      .select("id")
+      .select("id, status, timestamp")
       .eq("medicine_id", medicineId)
-      .gte("timestamp", todayStart.toISOString())
-      .lte("timestamp", todayEnd.toISOString());
+      .gte("timestamp", `${today}T00:00:00`)
+      .lte("timestamp", `${today}T23:59:59`);
 
-    if (existing && existing.length > 0) {
-      toast.info("Already logged for today");
-      return;
+    if (fetchError) throw fetchError;
+
+    if (existingLogs && existingLogs.length > 0) {
+      const log = existingLogs[0];
+      
+      // ✅ Only update if the new status is different
+      if (log.status !== status) {
+        const { error: updateError } = await supabase
+          .from("medicine_logs")
+          .update({ status, timestamp: now })
+          .eq("id", log.id);
+        if (updateError) throw updateError;
+      }
+    } else {
+      // No log yet for today → insert new one
+      const { error: insertError } = await supabase
+        .from("medicine_logs")
+        .insert([{ medicine_id: medicineId, status, timestamp: now }]);
+      if (insertError) throw insertError;
     }
 
-    const { error } = await supabase
-      .from("medicine_logs")
-      .insert([{ medicine_id: medicineId, status }]);
+    // Update the medicine table for UI sync (optional)
+    await supabase
+      .from("medicines")
+      .update({ status })
+      .eq("id", medicineId);
 
-    if (error) throw error;
-    toast.success(`Marked as ${status}`);
+    return true;
   } catch (err) {
     console.error("logDoseStatus failed:", err);
-    toast.error("Failed to log status");
+    return false;
   }
 }
 
 // ---------------------------------------------
-// Auto-mark missed doses (optional background use)
+// Auto-mark missed doses after 30 minutes
 // ---------------------------------------------
 export async function autoMarkMissedDoses() {
   try {
@@ -82,27 +110,32 @@ export async function autoMarkMissedDoses() {
     for (const med of medicines) {
       if (!med.time_of_day) continue;
 
-      const [hours, minutes, seconds] = med.time_of_day.split(":").map(Number);
+      const [hours, minutes] = med.time_of_day.split(":").map(Number);
       const medTime = new Date();
-      medTime.setHours(hours, minutes, seconds || 0, 0);
+      medTime.setHours(hours, minutes, 0, 0);
 
-      if (now > medTime) {
+      const diffMinutes = (now - medTime) / 60000;
+
+      if (diffMinutes > 30) {
+        // Check if there is already a log for today
         const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
+        todayStart.setUTCHours(0, 0, 0, 0);
         const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
+        todayEnd.setUTCHours(23, 59, 59, 999);
 
-        const { data: existing } = await supabase
+        const { data: existingLogs } = await supabase
           .from("medicine_logs")
           .select("id")
           .eq("medicine_id", med.id)
           .gte("timestamp", todayStart.toISOString())
           .lte("timestamp", todayEnd.toISOString());
 
-        if (!existing?.length) {
-          await supabase
+        // Only insert Missed if no log exists
+        if (!existingLogs?.length) {
+          const { error: insertError } = await supabase
             .from("medicine_logs")
-            .insert([{ medicine_id: med.id, status: "Missed" }]);
+            .insert([{ medicine_id: med.id, status: "Missed", timestamp: now }]);
+          if (insertError) throw insertError;
         }
       }
     }
@@ -110,3 +143,4 @@ export async function autoMarkMissedDoses() {
     console.error("autoMarkMissedDoses failed:", err);
   }
 }
+
