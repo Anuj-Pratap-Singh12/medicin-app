@@ -158,7 +158,7 @@ export async function autoMarkMissedDoses() {
                 medicine_id: med.id,
                 status: "Missed",
                 timestamp: now.toISOString(),
-                log_Date: logDate,
+                log_Date: log_date,
               },
             ]);
 
