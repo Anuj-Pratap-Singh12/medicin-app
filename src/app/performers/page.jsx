@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect , useCallback } from "react";
 import Layout from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,7 @@ import {
   fetchPerformersWithLogs,
   logDoseStatus,
   autoMarkMissedDoses,
-} from "@/integrations/supabase/supabaseHelper";
+} from "@/integrations/supabase/frontendHelper";
 
 const PerformersPage = () => {
   const [performers, setPerformers] = useState([]);
@@ -33,20 +33,31 @@ const PerformersPage = () => {
   const [editPerformer, setEditPerformer] = useState(null);
   const [user, setUser] = useState(null);
 
-  // Fetch user session
   useEffect(() => {
-    const getUser = async () => {
+  const getUser = async () => {
+    try {
       const { data, error } = await supabase.auth.getSession();
-      if (!error && data?.session?.user) setUser(data.session.user);
-    };
-    getUser();
-  }, []);
+      if (error) {
+        console.error("Supabase auth error:", error);
+        return;
+      }
+      if (data?.session?.user) setUser(data.session.user);
+    } catch (err) {
+      console.error("Failed to get user session:", err);
+    }
+  };
 
-  // Fetch performers & medicines
-  useEffect(() => {
+  getUser();
+}, []);
+
+// ---------------------------------------------
+// Fetch performers + medicines & setup realtime
+
+  // 2️⃣ Fetch performers + medicines (top-level useCallback)
+  const fetchData = useCallback(async () => {
     if (!user) return;
 
-    const fetchData = async () => {
+    try {
       const performersData = await fetchPerformersWithLogs(user.id);
       const normalized = performersData.map((p) => ({
         ...p,
@@ -56,12 +67,22 @@ const PerformersPage = () => {
           return a.time_of_day.localeCompare(b.time_of_day);
         }),
       }));
-
       setPerformers(normalized);
-      await autoMarkMissedDoses();
-    };
+    } catch (err) {
+      console.error("Error fetching performers:", err);
+    }
+  }, [user]); // ✅ user as dependency is correct
+
+  // 3️⃣ useEffect for initial fetch + realtime subscriptions
+  useEffect(() => {
+    if (!user) return;
+    
 
     fetchData();
+    const interval = setInterval(fetchData, 60000); // refresh every 60s
+  return () => clearInterval(interval);
+     // initial fetch
+
 
     const performerChannel = supabase
       .channel("performers-changes")
@@ -85,7 +106,7 @@ const PerformersPage = () => {
       supabase.removeChannel(performerChannel);
       supabase.removeChannel(medicineChannel);
     };
-  }, [user]);
+  }, [user, fetchData]); // include fetchData for proper dependency
 
   // Add performer
   const addPerformer = async () => {
@@ -207,14 +228,16 @@ const PerformersPage = () => {
       }
 
       setMedicineForms((prev) => ({
-        ...prev,
-        [formKey]: {
-          pill_name: "",
-          dosage: "",
-          frequency: "Daily",
-          time_of_day: "",
-        },
-      }));
+  ...prev,
+  [`temp-${performerId}`]: {
+    pill_name: "",
+    dosage: "",
+    frequency: "Daily",
+    time_of_day: "",
+    customFrequency: "",
+  },
+}));
+
       setOpenForm(null);
       toast.success("Medicine added!");
     } catch (err) {
@@ -534,21 +557,22 @@ const handleLogStatus = async (medicine, status) => {
                               <option value="Custom">Custom</option>
                             </select>
                             {medicineForms[med.id]?.frequency === "Custom" && (
-                              <input
-                                type="text"
-                                placeholder="Custom frequency"
-                                onChange={(e) =>
-                                  setMedicineForms((prev) => ({
-                                    ...prev,
-                                    [med.id]: {
-                                      ...prev[med.id],
-                                      customFrequency: e.target.value,
-                                    },
-                                  }))
-                                }
-                                className="px-2 py-1 border rounded-lg bg-black/60 text-white"
-                              />
-                            )}
+  <input
+    type="text"
+    placeholder="Custom frequency"
+    onChange={(e) =>
+      setMedicineForms((prev) => ({
+        ...prev,
+        [med.id]: {
+          ...prev[med.id],
+          customFrequency: e.target.value,
+        },
+      }))
+    }
+    className="px-2 py-1 border rounded-lg bg-black/60 text-white"
+  />
+)}
+
                             <Button
                               onClick={() =>
                                 updateMedicine(med.id, performer.id)
