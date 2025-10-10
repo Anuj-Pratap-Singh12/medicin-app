@@ -1,5 +1,4 @@
 // src/components/GoogleConnectButton.jsx
-
 import React from 'react';
 
 const GoogleConnectButton = () => {
@@ -13,8 +12,9 @@ const GoogleConnectButton = () => {
 
     const params = {
       response_type: 'code',
-      client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID, // Corrected
-      redirect_uri: import.meta.env.VITE_REDIRECT_URI, // Corrected
+      // ✅ Using Next.js's correct syntax
+      client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+      redirect_uri: process.env.NEXT_PUBLIC_REDIRECT_URI,
       scope: scope,
       access_type: 'offline',
       prompt: 'consent',
@@ -23,7 +23,7 @@ const GoogleConnectButton = () => {
     const urlParams = new URLSearchParams(params).toString();
     const fullUrl = `${googleAuthUrl}?${urlParams}`;
 
-    console.log("Generated Google Auth URL:", fullUrl); 
+    console.log("Generated Google Auth URL:", fullUrl);
 
     window.location.href = fullUrl;
   };

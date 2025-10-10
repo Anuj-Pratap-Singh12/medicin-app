@@ -224,25 +224,26 @@ const PerformersPage = () => {
   };
 
   // Update medicine
-  const updateMedicine = async (medicineId, performerId) => {
-    const updates = medicineForms[medicineId];
-    if (!updates || Object.keys(updates).length === 0) {
-      toast.error("No changes to save");
-      return;
-    }
+const updateMedicine = async (medicineId, performerId) => {
+  const updates = medicineForms[medicineId];
+  if (!updates || Object.keys(updates).length === 0) {
+    toast.error("No changes to save");
+    return;
+  }
 
-    const frequency =
-      updates.frequency === "Custom"
-        ? updates.customFrequency
-        : updates.frequency;
+  const frequency =
+    updates.frequency === "Custom"
+      ? updates.customFrequency
+      : updates.frequency;
 
-    try {
-      const { error } = await supabase
-        .from("medicines")
-        .update({ ...updates, frequency })
-        .eq("id", medicineId);
-      if (error) throw error;
+  try {
+    const success = await updateMedicineAndSync(
+      medicineId,
+      { ...updates, frequency },
+      user
+    );
 
+    if (success) {
       setPerformers((prev) =>
         prev.map((perf) =>
           perf.id === performerId
@@ -258,11 +259,12 @@ const PerformersPage = () => {
         )
       );
       setEditMedicine(null);
-      toast.success("Medicine updated!");
-    } catch {
-      toast.error("Failed to update medicine");
     }
-  };
+  } catch (err) {
+    console.error(err);
+    toast.error("Failed to update & sync medicine");
+  }
+};
 
   // Delete medicine
   const deleteMedicine = async (medicineId, performerId) => {
@@ -316,13 +318,14 @@ const handleLogStatus = async (medicine, status) => {
 
   console.log("Logging dose:", { medicineId: medicine.id, status });
 
+  // 1️⃣ Update Supabase table first
   const success = await logDoseStatus(medicine.id, status);
   if (!success) {
     toast.error("Failed to log status");
     return;
   }
 
-  // 🔁 Immediately update local UI
+  // 2️⃣ Update local UI immediately
   setPerformers((prev) =>
     prev.map((perf) => ({
       ...perf,
@@ -334,9 +337,33 @@ const handleLogStatus = async (medicine, status) => {
 
   toast.success(`Marked as ${status}`);
 
-  // 🔄 Refresh from backend (important for charts or synced data)
+  // 3️⃣ Call Supabase Edge Function to update Google Calendar
+  try {
+    const res = await fetch("/functions/v1/update-calendar-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user: user, // your current logged-in user
+        eventId: medicine.google_event_id, // store this in your medicines table
+        status: status.toLowerCase(), // "taken" or "missed"
+        pill_name: medicine.pill_name,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      console.error("Google Calendar update failed:", data.error);
+      toast.error("Failed to update Google Calendar");
+    }
+  } catch (err) {
+    console.error("Error calling Edge Function:", err);
+    toast.error("Google Calendar sync failed");
+  }
+
+  // 4️⃣ Refresh from backend if needed
   await refreshData();
 };
+
 
   const getTimeLeft = (time) => {
     if (!time) return "No time set";
