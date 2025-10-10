@@ -13,6 +13,7 @@ const adminClient = createClient(
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+
 console.log("🚀 Starting missed dose checker...");
 console.log("ENV VARS LOADED:", {
   SUPABASE_URL: process.env.SUPABASE_URL,
