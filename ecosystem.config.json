@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "medicine-cron",
+      "script": "server/cron.js",
+      "watch": false,
+      "autorestart": true,
+      "env": {
+        "NODE_ENV": "development",
+        "SUPABASE_URL": "https://gxnrcwwlueqksmsjbudw.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bnJjd3dsdWVxa3Ntc2pidWR3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQwNDcwMSwiZXhwIjoyMDc0OTgwNzAxfQ.1XkpQcE90IAiWKJZHO-CcoS5Uj3-iqRqJwcc3bNjP8M",
+        "BASE_URL": "http://localhost:3000",
+        "SENDGRID_API_KEY": "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",
+        "SENDGRID_FROM_EMAIL": "palvaishnavi2024@gmail.com"
+      },
+      "env_production": {
+        "NODE_ENV": "production",
+        "SUPABASE_URL": "https://gxnrcwwlueqksmsjbudw.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bnJjd3dsdWVxa3Ntc2pidWR3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTQwNDcwMSwiZXhwIjoyMDc0OTgwNzAxfQ.1XkpQcE90IAiWKJZHO-CcoS5Uj3-iqRqJwcc3bNjP8M",
+        "BASE_URL": "https://your-production-url.com",
+        "SENDGRID_API_KEY": "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",
+        "SENDGRID_FROM_EMAIL": "palvaishnavi2024@gmail.com"
+      }
+    }
+  ]
+}
