@@ -26,6 +26,10 @@ console.log("SUPABASE_SERVICE_ROLE_KEY:", !!process.env.SUPABASE_SERVICE_ROLE_KE
 // ---------------------------------------------
 // Helper: send email notification
 // ---------------------------------------------
+
+console.log("SendGrid API key loaded:", process.env.SENDGRID_API_KEY?.slice(0,5) + "...");
+console.log("From email:", process.env.SENDGRID_FROM_EMAIL);
+
 async function sendMissedDoseEmail(email, performerName, pillName, date) {
   try {
     await sgMail.send({
