@@ -26,6 +26,10 @@ console.log("SUPABASE_SERVICE_ROLE_KEY:", !!process.env.SUPABASE_SERVICE_ROLE_KE
 // ---------------------------------------------
 // Helper: send email notification
 // ---------------------------------------------
+
+console.log("SendGrid API key loaded:", process.env.SENDGRID_API_KEY?.slice(0,5) + "...");
+console.log("From email:", process.env.SENDGRID_FROM_EMAIL);
+
 async function sendMissedDoseEmail(email, performerName, pillName, date) {
   try {
     await sgMail.send({
@@ -39,7 +43,6 @@ async function sendMissedDoseEmail(email, performerName, pillName, date) {
           <p>We hope you are doing well. This is a reminder that you <strong style="color: #d9534f;">missed your scheduled medicine</strong>:</p>
           <ul>
             <li>💊 <strong style="color: #28a745;">Medicine:</strong> <strong>${pillName}</strong></li>
-            <li>📅 <strong style="color: #28a745;">Scheduled Date:</strong> ${date}</li>
             
           </ul>
           <p>To maintain your health schedule, please take the medicine as soon as possible or consult your healthcare provider if needed.</p>
