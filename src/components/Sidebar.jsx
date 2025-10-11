@@ -6,12 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { Home, Users, Activity, LogOut, Sparkles } from "lucide-react";
+import { Home, Users, Activity, LogOut, Sparkles, MessageSquare } from "lucide-react";
 
 const navItems = [
   { name: "Ritual Dashboard", href: "/", icon: Home },
   { name: "Performers", href: "/performers", icon: Users },
   { name: "Wellness Rate", href: "/wellness", icon: Activity },
+  { name: "Chatbot", href: "/chatbot", icon: MessageSquare }, // Added Chatbot
 ];
 
 const Sidebar = () => {
@@ -28,9 +29,8 @@ const Sidebar = () => {
         const user = data?.user;
 
         if (user && mounted) {
-          console.log("User metadata:", user.user_metadata); // 🔍 Debug
           const name =
-            user.user_metadata?.username || // ✅ prioritize username
+            user.user_metadata?.username ||
             user.user_metadata?.full_name ||
             user.user_metadata?.name ||
             user.user_metadata?.preferred_username ||
@@ -47,7 +47,6 @@ const Sidebar = () => {
 
     loadUser();
 
-    // 🔄 Update name when auth state changes
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       const user = session?.user;
       if (user && mounted) {
