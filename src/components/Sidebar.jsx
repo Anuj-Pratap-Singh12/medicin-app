@@ -6,12 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { Home, Users, Activity, LogOut, Sparkles } from "lucide-react";
+import { Home, Users, Activity, LogOut, Sparkles, MessageSquare } from "lucide-react";
 
 const navItems = [
   { name: "Ritual Dashboard", href: "/", icon: Home },
   { name: "Performers", href: "/performers", icon: Users },
   { name: "Wellness Rate", href: "/wellness", icon: Activity },
+  { name: "Chatbot", href: "/chatbot", icon: MessageSquare }, // Added Chatbot
 ];
 
 const Sidebar = () => {
